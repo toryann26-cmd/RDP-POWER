@@ -1,0 +1,85 @@
+name: NOXNAME – RDP + Tailscale (6 Hours)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ts_authkey:
+        description: "Tailscale Auth Key (tskey-auth-XXXX)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: noxname-single-session
+  cancel-in-progress: false
+
+jobs:
+  rdp:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    env:
+      RDP_USER: NOXNAME
+      RDP_PASS: Sagar@rdp123
+      TS_HOSTNAME: NOXNAME
+
+    steps:
+
+      - name: Install and start Tailscale
+        shell: powershell
+        run: |
+          $exe = "$env:ProgramFiles\Tailscale\tailscale.exe"
+
+          if (-not (Test-Path $exe)) {
+            Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi" -OutFile "$env:TEMP\tailscale.msi"
+
+            Start-Process msiexec.exe -Wait -ArgumentList "/i", "$env:TEMP\tailscale.msi", "/quiet", "/norestart"
+          }
+
+          & $exe logout | Out-Null
+          & $exe up --authkey "${{ inputs.ts_authkey }}" --hostname "$env:TS_HOSTNAME" --accept-dns=false --reset
+
+      - name: Show Tailscale IP (NOXNAME)
+        shell: powershell
+        run: |
+          $exe = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          $ip = & $exe ip -4 | Select-Object -First 1
+
+          Write-Host ""
+          Write-Host "================================="
+          Write-Host " RDP NAME : NOXNAME"
+          Write-Host " RDP IP   : $ip"
+          Write-Host " USER     : NOXNAME"
+          Write-Host "================================="
+
+      - name: Enable RDP
+        shell: powershell
+        run: |
+          $sec = ConvertTo-SecureString $env:RDP_PASS -AsPlainText -Force
+
+          if (-not (Get-LocalUser -Name $env:RDP_USER -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name $env:RDP_USER -Password $sec -AccountNeverExpires
+            Add-LocalGroupMember Administrators $env:RDP_USER
+            Add-LocalGroupMember "Remote Desktop Users" $env:RDP_USER
+          } else {
+            Set-LocalUser -Name $env:RDP_USER -Password $sec
+            Enable-LocalUser -Name $env:RDP_USER
+          }
+
+          Set-ItemProperty "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name fDenyTSConnections -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+      - name: KEEP ALIVE (6 HOURS CONTINUOUS)
+        shell: powershell
+        run: |
+          $end = (Get-Date).AddHours(6)
+
+          while ((Get-Date) -lt $end) {
+            Start-Sleep -Seconds 60
+          }
+
+      - name: Finished
+        shell: powershell
+        run: echo "NOXNAME session ended after 6 hours"
